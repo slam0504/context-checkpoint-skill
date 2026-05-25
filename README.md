@@ -21,10 +21,16 @@ Two global Claude Code hooks (zero API cost, stdlib Python only):
 - On `compact` / `resume` / `clear`, the **full** (bounded) checkpoint is injected with a one-line
   instruction to reconstruct the judgment sections. On `startup`, only a **one-line pointer** is
   injected to avoid stale noise.
+- The injected restore payload is **hard-capped** at `CC_RESTORE_MAXCHARS`, even when the git /
+  judgment / remembered sections are individually large (the Recent Transcript is trimmed first, then
+  the whole payload is truncated as a backstop). The checkpoint *file* itself is also bounded: git
+  state and carried-forward judgment sections are capped.
 - Writes are **atomic** (`.tmp` + `os.replace`), so a restore never reads a partial file.
 - Hooks are **non-blocking by default**: any error is logged and the hook still exits 0, so the
   checkpoint system can never trap you during compaction. Set `CONTEXT_CHECKPOINT_STRICT=1` to make
-  errors surface (non-zero exit) for debugging.
+  errors surface (non-zero exit) for debugging. The wrapper error log lives at
+  `~/.claude/hooks/.wrapper-error.log`, falling back to `/tmp/context-checkpoint-wrapper-error.log`
+  if that path isn't writable — so Python always runs regardless.
 
 ### Checkpoint file format
 
@@ -51,7 +57,8 @@ the Git State + Recent Transcript.
 
 Requires `python3` and `git`. The installer copies the hook files to `~/.claude/hooks/` and
 **merges** (never overwrites) `~/.claude/settings.json`, preserving existing plugins, settings, and
-hooks.
+hooks. If `settings.json` already exists, it is **backed up** to `settings.json.bak.<timestamp>`
+before the merge.
 
 ```bash
 git clone git@github.com:slam0504/context-checkpoint-skill.git
@@ -63,12 +70,12 @@ The merge is additive — it only adds `PreCompact` and `SessionStart` entries, 
 (re-running won't duplicate them). It coexists with other plugins' hooks (e.g. the `remember`
 plugin's own `SessionStart`).
 
-To revert, restore your settings backup and remove the copied files:
+To revert, restore the automatic backup and remove the copied files:
 
 ```bash
-# the installer does not back up automatically; back up first if you want a clean revert:
-cp ~/.claude/settings.json ~/.claude/settings.json.bak
-# then remove the two hook entries from ~/.claude/settings.json and:
+# restore the most recent pre-install backup:
+cp "$(ls -t ~/.claude/settings.json.bak.* | head -1)" ~/.claude/settings.json
+# remove the copied hook files:
 rm ~/.claude/hooks/{checkpoint_common,precompact_checkpoint,sessionstart_restore}.py \
    ~/.claude/hooks/{precompact-checkpoint,sessionstart-restore}.sh
 ```
@@ -94,6 +101,8 @@ All optional; sensible defaults are baked in. Override via environment variables
 | `CC_MSG_MAXCHARS` | 1200 | per-message truncation in Recent Transcript |
 | `CC_TRANSCRIPT_MAXCHARS` | 8000 | cap of the Recent Transcript section **in the file** |
 | `CC_REMEMBER_MAXCHARS` | 2000 | cap of the Remembered Notes section |
+| `CC_GIT_MAXCHARS` | 2000 | cap of the Git State section (large `git status` lists) |
+| `CC_JUDGMENT_MAXCHARS` | 2000 | cap of each carried-forward judgment section (Goal/State/Next) |
 | `CC_RESTORE_MAXCHARS` | 6000 | hard cap of the **injected** restore payload (kept under Claude's 10k hook output limit) |
 | `CONTEXT_CHECKPOINT_STRICT` | unset | non-zero exit on error when `=1` |
 
