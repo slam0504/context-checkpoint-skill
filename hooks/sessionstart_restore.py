@@ -44,3 +44,34 @@ def build_restore_payload(md, restore_max):
         budget = 0
     new_rt = md[body_start:body_start + budget].rstrip() + _MARKER
     return INSTRUCTION + before + new_rt + after
+
+
+def emit(additional_context):
+    print(json.dumps({
+        "hookSpecificOutput": {
+            "hookEventName": "SessionStart",
+            "additionalContext": additional_context,
+        }
+    }))
+
+
+def main():
+    data = cc.read_hook_input(sys.stdin.read())
+    project_root = cc.resolve_project_root(data)
+    source = data.get("source", "")
+    checkpoint_path = os.path.join(project_root, ".agent", "session-checkpoint.md")
+    if not os.path.exists(checkpoint_path):
+        return
+    try:
+        with open(checkpoint_path) as f:
+            md = f.read()
+    except OSError:
+        return
+    if source == "startup":
+        emit(build_pointer(md))
+    elif source in ("compact", "resume", "clear"):
+        emit(build_restore_payload(md, cc.get_int("CC_RESTORE_MAXCHARS", 6000)))
+
+
+if __name__ == "__main__":
+    main()

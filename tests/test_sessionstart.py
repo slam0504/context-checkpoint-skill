@@ -37,5 +37,46 @@ class TestRestorePayload(unittest.TestCase):
         self.assertIn("truncated — full checkpoint", out)
 
 
+import json
+import subprocess
+import tempfile
+
+
+def _run_restore(payload):
+    sh = os.path.join(os.path.dirname(__file__), "..", "hooks", "sessionstart-restore.sh")
+    return subprocess.run(["bash", sh], input=payload, text=True, capture_output=True)
+
+
+class TestMainE2E(unittest.TestCase):
+    def test_no_checkpoint_no_output(self):
+        with tempfile.TemporaryDirectory() as d:
+            r = _run_restore(json.dumps({"cwd": d, "source": "resume"}))
+            self.assertEqual(r.returncode, 0)
+            self.assertEqual(r.stdout.strip(), "")
+
+    def test_startup_emits_pointer(self):
+        with tempfile.TemporaryDirectory() as d:
+            os.makedirs(os.path.join(d, ".agent"))
+            with open(os.path.join(d, ".agent", "session-checkpoint.md"), "w") as f:
+                f.write(SAMPLE)
+            r = _run_restore(json.dumps({"cwd": d, "source": "startup"}))
+            obj = json.loads(r.stdout)
+            ctx = obj["hookSpecificOutput"]["additionalContext"]
+            self.assertIn(".agent/session-checkpoint.md", ctx)
+            self.assertNotIn("## Git State", ctx)
+
+    def test_compact_emits_full_restore(self):
+        with tempfile.TemporaryDirectory() as d:
+            os.makedirs(os.path.join(d, ".agent"))
+            with open(os.path.join(d, ".agent", "session-checkpoint.md"), "w") as f:
+                f.write(SAMPLE)
+            r = _run_restore(json.dumps({"cwd": d, "source": "compact"}))
+            obj = json.loads(r.stdout)
+            ctx = obj["hookSpecificOutput"]["additionalContext"]
+            self.assertEqual(obj["hookSpecificOutput"]["hookEventName"], "SessionStart")
+            self.assertTrue(ctx.startswith(ss.INSTRUCTION))
+            self.assertIn("## Git State", ctx)
+
+
 if __name__ == "__main__":
     unittest.main()
