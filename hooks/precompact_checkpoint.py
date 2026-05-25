@@ -140,6 +140,8 @@ def main():
     msg_max = cc.get_int("CC_MSG_MAXCHARS", 1200)
     tr_max = cc.get_int("CC_TRANSCRIPT_MAXCHARS", 8000)
     rem_max = cc.get_int("CC_REMEMBER_MAXCHARS", 2000)
+    git_max = cc.get_int("CC_GIT_MAXCHARS", 2000)
+    jud_max = cc.get_int("CC_JUDGMENT_MAXCHARS", 2000)
 
     checkpoint_path = os.path.join(project_root, ".agent", "session-checkpoint.md")
     prev_md = ""
@@ -150,13 +152,17 @@ def main():
         except OSError:
             prev_md = ""
 
+    carried = carry_forward(prev_md)
+    for k in carried:
+        carried[k] = cc.truncate(carried[k], jud_max)
+
     content = build_checkpoint(
         trigger,
         project_root,
-        build_git_state(project_root),
+        cc.truncate(build_git_state(project_root), git_max),
         extract_recent_transcript(transcript_path, n, msg_max, tr_max),
         read_remember(project_root, rem_max),
-        carry_forward(prev_md),
+        carried,
     )
     cc.atomic_write(checkpoint_path, content)
     cc.log(project_root, f"PreCompact checkpoint written (trigger={trigger})")

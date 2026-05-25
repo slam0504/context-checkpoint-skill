@@ -127,6 +127,38 @@ class TestPreCompactMainE2E(unittest.TestCase):
             self.assertIn("Trigger: manual", content)
             self.assertIn("do X", content)
 
+    def test_main_caps_carried_forward_judgment(self):
+        with tempfile.TemporaryDirectory() as d:
+            os.makedirs(os.path.join(d, ".agent"))
+            cp = os.path.join(d, ".agent", "session-checkpoint.md")
+            with open(cp, "w") as f:
+                f.write("# Session Checkpoint\n\n## Current Goal\n" + ("G" * 5000) +
+                        "\n\n## Current State\nx\n\n## Next Steps\ny\n")
+            tpath = os.path.join(d, "t.jsonl")
+            _write_jsonl(tpath, [{"message": {"role": "user", "content": "hi"}}])
+            payload = json.dumps({"cwd": d, "transcript_path": tpath, "trigger": "auto"})
+            sh = os.path.join(os.path.dirname(__file__), "..", "hooks", "precompact-checkpoint.sh")
+            env = dict(os.environ, CC_JUDGMENT_MAXCHARS="100")
+            subprocess.run(["bash", sh], input=payload, text=True, capture_output=True, env=env)
+            goal = pc.cc.get_section(open(cp).read(), "Current Goal")
+            self.assertLessEqual(len(goal), 160)  # 100 + truncate marker
+
+    def test_main_caps_git_state(self):
+        with tempfile.TemporaryDirectory() as d:
+            subprocess.run(["git", "init"], cwd=d, capture_output=True)
+            subprocess.run(["git", "config", "user.email", "t@t"], cwd=d, capture_output=True)
+            subprocess.run(["git", "config", "user.name", "t"], cwd=d, capture_output=True)
+            for i in range(50):
+                open(os.path.join(d, f"untracked_{i}.txt"), "w").close()
+            tpath = os.path.join(d, "t.jsonl")
+            _write_jsonl(tpath, [{"message": {"role": "user", "content": "hi"}}])
+            payload = json.dumps({"cwd": d, "transcript_path": tpath, "trigger": "auto"})
+            sh = os.path.join(os.path.dirname(__file__), "..", "hooks", "precompact-checkpoint.sh")
+            env = dict(os.environ, CC_GIT_MAXCHARS="120")
+            subprocess.run(["bash", sh], input=payload, text=True, capture_output=True, env=env)
+            git_state = pc.cc.get_section(open(os.path.join(d, ".agent", "session-checkpoint.md")).read(), "Git State")
+            self.assertLessEqual(len(git_state), 180)  # 120 + marker
+
     def test_main_carries_forward_on_second_run(self):
         with tempfile.TemporaryDirectory() as d:
             os.makedirs(os.path.join(d, ".agent"))
