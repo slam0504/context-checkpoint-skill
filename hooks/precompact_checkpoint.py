@@ -85,3 +85,82 @@ def extract_recent_transcript(transcript_path, n, msg_max, total_max):
     if len(recent) < len(window):
         body = "(…earlier messages trimmed…)\n\n" + body
     return cc.truncate(body, total_max)
+
+
+from datetime import datetime
+
+
+def read_remember(project_root, maxchars):
+    path = os.path.join(project_root, ".remember", "remember.md")
+    if not os.path.exists(path):
+        return "(none)"
+    try:
+        with open(path) as f:
+            return cc.truncate(f.read().strip(), maxchars) or "(none)"
+    except OSError:
+        return "(none)"
+
+
+def carry_forward(prev_md):
+    result = {
+        "Current Goal": cc.PLACEHOLDER,
+        "Current State": cc.PLACEHOLDER,
+        "Next Steps": cc.PLACEHOLDER,
+    }
+    if not prev_md:
+        return result
+    for name in result:
+        body = cc.get_section(prev_md, name).strip()
+        if body and body != cc.PLACEHOLDER:
+            result[name] = body
+    return result
+
+
+def build_checkpoint(trigger, project_root, git_state, transcript, remember, carried):
+    ts = datetime.now().isoformat(timespec="seconds")
+    return (
+        "# Session Checkpoint\n"
+        f"Updated: {ts} | Trigger: {trigger} | Project: {project_root}\n\n"
+        f"## Current Goal\n{carried['Current Goal']}\n\n"
+        f"## Current State\n{carried['Current State']}\n\n"
+        f"## Git State\n{git_state}\n\n"
+        f"## Recent Transcript\n{transcript}\n\n"
+        f"## Remembered Notes\n{remember}\n\n"
+        f"## Next Steps\n{carried['Next Steps']}\n"
+    )
+
+
+def main():
+    data = cc.read_hook_input(sys.stdin.read())
+    project_root = cc.resolve_project_root(data)
+    trigger = data.get("trigger") or data.get("matcher_value") or "unknown"
+    transcript_path = data.get("transcript_path")
+
+    n = cc.get_int("CC_RECENT_MSGS", 12)
+    msg_max = cc.get_int("CC_MSG_MAXCHARS", 1200)
+    tr_max = cc.get_int("CC_TRANSCRIPT_MAXCHARS", 8000)
+    rem_max = cc.get_int("CC_REMEMBER_MAXCHARS", 2000)
+
+    checkpoint_path = os.path.join(project_root, ".agent", "session-checkpoint.md")
+    prev_md = ""
+    if os.path.exists(checkpoint_path):
+        try:
+            with open(checkpoint_path) as f:
+                prev_md = f.read()
+        except OSError:
+            prev_md = ""
+
+    content = build_checkpoint(
+        trigger,
+        project_root,
+        build_git_state(project_root),
+        extract_recent_transcript(transcript_path, n, msg_max, tr_max),
+        read_remember(project_root, rem_max),
+        carry_forward(prev_md),
+    )
+    cc.atomic_write(checkpoint_path, content)
+    cc.log(project_root, f"PreCompact checkpoint written (trigger={trigger})")
+
+
+if __name__ == "__main__":
+    main()
