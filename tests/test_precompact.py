@@ -127,6 +127,24 @@ class TestPreCompactMainE2E(unittest.TestCase):
             self.assertIn("Trigger: manual", content)
             self.assertIn("do X", content)
 
+    def test_wrapper_runs_even_if_home_log_unwritable(self):
+        with tempfile.TemporaryDirectory() as d, tempfile.TemporaryDirectory() as ro_home:
+            os.chmod(ro_home, 0o500)  # read-only HOME: ~/.claude/hooks uncreatable
+            try:
+                tpath = os.path.join(d, "t.jsonl")
+                _write_jsonl(tpath, [{"message": {"role": "user", "content": "do X"}}])
+                payload = json.dumps({"cwd": d, "transcript_path": tpath, "trigger": "manual"})
+                sh = os.path.join(os.path.dirname(__file__), "..", "hooks", "precompact-checkpoint.sh")
+                env = dict(os.environ, HOME=ro_home)
+                r = subprocess.run(["bash", sh], input=payload, text=True, capture_output=True, env=env)
+                self.assertEqual(r.returncode, 0)
+                self.assertTrue(
+                    os.path.exists(os.path.join(d, ".agent", "session-checkpoint.md")),
+                    "checkpoint must be written even when HOME log path is unwritable",
+                )
+            finally:
+                os.chmod(ro_home, 0o700)
+
     def test_main_caps_carried_forward_judgment(self):
         with tempfile.TemporaryDirectory() as d:
             os.makedirs(os.path.join(d, ".agent"))
