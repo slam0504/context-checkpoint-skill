@@ -10,5 +10,11 @@ cp "$SRC/hooks/checkpoint_common.py" \
    "$SRC/hooks/sessionstart-restore.sh" \
    "$DEST/"
 chmod +x "$DEST/precompact-checkpoint.sh" "$DEST/sessionstart-restore.sh"
-python3 "$SRC/hooks/merge_settings.py" "${HOME}/.claude/settings.json" "$DEST"
+SETTINGS="${HOME}/.claude/settings.json"
+if [ -f "$SETTINGS" ]; then
+  BAK="${SETTINGS}.bak.$(date +%s)"
+  cp "$SETTINGS" "$BAK"
+  echo "Backed up settings to $BAK"
+fi
+python3 "$SRC/hooks/merge_settings.py" "$SETTINGS" "$DEST"
 echo "Installed context-checkpoint hooks to $DEST and merged ~/.claude/settings.json"
