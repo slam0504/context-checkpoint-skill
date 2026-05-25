@@ -39,5 +39,31 @@ class TestInputAndConfig(unittest.TestCase):
         self.assertEqual(cc.truncate(None, 10), "")
 
 
+import tempfile
+
+
+class TestWriteAndSections(unittest.TestCase):
+    def test_atomic_write_no_tmp_left(self):
+        with tempfile.TemporaryDirectory() as d:
+            path = os.path.join(d, "sub", "out.md")
+            cc.atomic_write(path, "content")
+            with open(path) as f:
+                self.assertEqual(f.read(), "content")
+            self.assertFalse(os.path.exists(path + ".tmp"))
+
+    def test_split_and_get_section(self):
+        md = (
+            "# Session Checkpoint\n"
+            "Updated: x | Trigger: auto | Project: /p\n\n"
+            "## Current Goal\nship it\n\n"
+            "## Git State\nBranch: main\n\n"
+            "## Next Steps\ndo thing\n"
+        )
+        self.assertEqual(cc.get_section(md, "Current Goal"), "ship it")
+        self.assertEqual(cc.get_section(md, "Git State"), "Branch: main")
+        self.assertEqual(cc.get_section(md, "Next Steps"), "do thing")
+        self.assertEqual(cc.get_section(md, "Missing"), "")
+
+
 if __name__ == "__main__":
     unittest.main()

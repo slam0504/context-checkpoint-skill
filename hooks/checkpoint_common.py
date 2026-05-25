@@ -47,3 +47,44 @@ def log(project_root, msg):
             f.write(f"{datetime.now().isoformat(timespec='seconds')} {msg}\n")
     except OSError:
         pass
+
+
+def atomic_write(path, content):
+    d = os.path.dirname(path)
+    if d:
+        os.makedirs(d, exist_ok=True)
+    tmp = path + ".tmp"
+    with open(tmp, "w") as f:
+        f.write(content)
+    os.replace(tmp, path)
+
+
+def split_checkpoint(md):
+    """Return (preamble, [(name, body), ...]) preserving order."""
+    preamble = []
+    sections = []
+    cur_name = None
+    cur_body = []
+    for line in (md or "").splitlines():
+        if line.startswith("## "):
+            if cur_name is None:
+                preamble = cur_body
+            else:
+                sections.append((cur_name, "\n".join(cur_body).strip()))
+            cur_name = line[3:].strip()
+            cur_body = []
+        else:
+            cur_body.append(line)
+    if cur_name is None:
+        preamble = cur_body
+    else:
+        sections.append((cur_name, "\n".join(cur_body).strip()))
+    return ("\n".join(preamble).strip(), sections)
+
+
+def get_section(md, name):
+    _, sections = split_checkpoint(md)
+    for n, body in sections:
+        if n == name:
+            return body
+    return ""
