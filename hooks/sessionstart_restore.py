@@ -43,7 +43,10 @@ def build_restore_payload(md, restore_max):
     if budget < 0:
         budget = 0
     new_rt = md[body_start:body_start + budget].rstrip() + _MARKER
-    return INSTRUCTION + before + new_rt + after
+    result = INSTRUCTION + before + new_rt + after
+    # Hard backstop: non-transcript sections (git/judgment/remember) can alone
+    # exceed the cap, leaving budget at 0. Guarantee the injected payload is bounded.
+    return cc.truncate(result, restore_max, _MARKER)
 
 
 def emit(additional_context):

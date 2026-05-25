@@ -36,6 +36,18 @@ class TestRestorePayload(unittest.TestCase):
         self.assertIn("## Next Steps", out)
         self.assertIn("truncated — full checkpoint", out)
 
+    def test_hard_cap_when_nontranscript_sections_huge(self):
+        # Non-transcript sections alone exceed the cap; output must still be bounded.
+        md = (
+            "# Session Checkpoint\nUpdated: x\n\n"
+            "## Current Goal\n" + ("G" * 8000) + "\n\n"
+            "## Recent Transcript\nshort\n\n"
+            "## Remembered Notes\n" + ("R" * 5000) + "\n\n"
+            "## Next Steps\n" + ("N" * 3000) + "\n"
+        )
+        out = ss.build_restore_payload(md, 6000)
+        self.assertLessEqual(len(out), 6000)
+
 
 import json
 import subprocess
