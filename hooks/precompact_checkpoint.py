@@ -49,6 +49,13 @@ def _content_to_text(content):
     return ""
 
 
+def _is_tool_result_only(content):
+    if not isinstance(content, list) or not content:
+        return False
+    blocks = [b for b in content if isinstance(b, dict)]
+    return bool(blocks) and all(b.get("type") == "tool_result" for b in blocks)
+
+
 def extract_recent_transcript(transcript_path, n, msg_max, total_max):
     if not transcript_path or not os.path.exists(transcript_path):
         return "(transcript unavailable)"
@@ -68,6 +75,11 @@ def extract_recent_transcript(transcript_path, n, msg_max, total_max):
                     continue
                 role = message.get("role")
                 if role not in ("user", "assistant"):
+                    continue
+                # Tool-result-only messages reduce to "[tool_result: NB]"
+                # placeholders; keep them out of the last-N window so real
+                # user/assistant text survives tool-heavy sessions.
+                if _is_tool_result_only(message.get("content")):
                     continue
                 text = _content_to_text(message.get("content")).strip()
                 if not text:

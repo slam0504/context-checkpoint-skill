@@ -62,6 +62,29 @@ class TestTranscript(unittest.TestCase):
             self.assertIn("[tool_result:", out)
             self.assertNotIn("ignore me", out)
 
+    def test_pure_tool_result_messages_do_not_consume_window(self):
+        # In tool-heavy agentic sessions each tool_result arrives as its own
+        # user message; its extracted text is just a "[tool_result: NB]"
+        # placeholder with no judgment content. Those messages must not crowd
+        # real user/assistant text out of the last-N window.
+        with tempfile.TemporaryDirectory() as d:
+            p = os.path.join(d, "t.jsonl")
+            rows = [{"message": {"role": "user", "content": "real question"}}]
+            rows += [
+                {"message": {"role": "user", "content": [
+                    {"type": "tool_result", "content": "x" * 50},
+                ]}}
+                for _ in range(5)
+            ]
+            rows.append({"message": {"role": "assistant", "content": [
+                {"type": "text", "text": "final answer"},
+            ]}})
+            _write_jsonl(p, rows)
+            out = pc.extract_recent_transcript(p, 3, 100, 2000)
+            self.assertIn("real question", out)
+            self.assertIn("final answer", out)
+            self.assertNotIn("[tool_result:", out)
+
     def test_last_n_and_total_cap(self):
         with tempfile.TemporaryDirectory() as d:
             p = os.path.join(d, "t.jsonl")

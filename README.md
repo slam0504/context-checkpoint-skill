@@ -44,6 +44,7 @@ Updated: <timestamp> | Trigger: auto|manual | Project: <cwd>
 ## Current State      # carried forward from prior checkpoint, else placeholder
 ## Git State          # branch + status --short + log -5, or "(not a git repository)"
 ## Recent Transcript  # last ~12 user/assistant messages, trimmed & capped
+                      # (tool-result-only messages are skipped and don't count)
 ## Remembered Notes   # copy of .remember/remember.md if present
 ## Next Steps         # carried forward from prior checkpoint, else placeholder
 ```
@@ -97,7 +98,7 @@ All optional; sensible defaults are baked in. Override via environment variables
 
 | Var | Default | Meaning |
 |-----|---------|---------|
-| `CC_RECENT_MSGS` | 12 | # of recent user/assistant messages captured |
+| `CC_RECENT_MSGS` | 12 | # of recent user/assistant messages captured (tool-result-only messages excluded — they reduce to `[tool_result: NB]` placeholders and would crowd out real content in tool-heavy sessions) |
 | `CC_MSG_MAXCHARS` | 1200 | per-message truncation in Recent Transcript |
 | `CC_TRANSCRIPT_MAXCHARS` | 8000 | cap of the Recent Transcript section **in the file** |
 | `CC_REMEMBER_MAXCHARS` | 2000 | cap of the Remembered Notes section |
