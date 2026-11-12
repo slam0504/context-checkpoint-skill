@@ -1,6 +1,7 @@
 """Shared helpers for context-checkpoint hooks (stdlib only)."""
 import json
 import os
+import re
 from datetime import datetime
 
 PLACEHOLDER = "(reconstruct from Recent Transcript on resume)"
@@ -30,6 +31,22 @@ def resolve_project_root(data):
     )
 
 
+def resolve_checkpoint_root(data):
+    # CLAUDE_PROJECT_DIR stays at the directory the session started in, while
+    # the hook's cwd follows every cd; the checkpoint must not move with it.
+    return os.environ.get("CLAUDE_PROJECT_DIR") or resolve_project_root(data)
+
+
+def session_checkpoint_path(root, session_id):
+    # Sessions started in one directory share session-checkpoint.md, and
+    # compaction takes minutes, so another session can overwrite it before the
+    # first one reads it back. Each session also keeps its own copy.
+    # The id comes from stdin, so only a plain token may become a file name.
+    if not isinstance(session_id, str) or not re.fullmatch(r"[A-Za-z0-9_-]+", session_id):
+        return None
+    return os.path.join(root, ".agent", "session-checkpoints", session_id + ".md")
+
+
 def truncate(text, maxchars, marker="\n…(truncated)…"):
     if text is None:
         return ""
@@ -37,6 +54,14 @@ def truncate(text, maxchars, marker="\n…(truncated)…"):
         return text
     keep = max(0, maxchars - len(marker))
     return text[:keep] + marker
+
+
+def tail(text, maxchars, marker="(…earlier notes trimmed…)\n"):
+    # Notes are appended over time, so the newest entries sit at the end.
+    if len(text) <= maxchars:
+        return text
+    keep = max(0, maxchars - len(marker))
+    return marker + text[len(text) - keep:]
 
 
 def log(project_root, msg):
@@ -88,3 +113,15 @@ def get_section(md, name):
         if n == name:
             return body
     return ""
+
+
+def parse_header(md):
+    for line in (md or "").splitlines():
+        if line.startswith("Updated:"):
+            header = {}
+            for part in line.split(" | "):
+                key, sep, value = part.partition(": ")
+                if sep:
+                    header[key] = value.strip()
+            return header
+    return {}

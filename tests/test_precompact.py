@@ -43,7 +43,7 @@ class TestTranscript(unittest.TestCase):
             "(transcript unavailable)",
         )
 
-    def test_extract_roles_and_markers(self):
+    def test_roles_are_labelled_and_non_message_lines_are_ignored(self):
         with tempfile.TemporaryDirectory() as d:
             p = os.path.join(d, "t.jsonl")
             _write_jsonl(p, [
@@ -56,11 +56,7 @@ class TestTranscript(unittest.TestCase):
                 ]}},
             ])
             out = pc.extract_recent_transcript(p, 5, 100, 1000)
-            self.assertIn("**user:** hello there", out)
-            self.assertIn("**assistant:**", out)
-            self.assertIn("[tool_use: Bash]", out)
-            self.assertIn("[tool_result:", out)
-            self.assertNotIn("ignore me", out)
+            self.assertEqual(out, "**user:** hello there\n\n**assistant:** hi\n[tool_use: Bash]")
 
     def test_pure_tool_result_messages_do_not_consume_window(self):
         # In tool-heavy agentic sessions each tool_result arrives as its own
@@ -97,29 +93,22 @@ class TestTranscript(unittest.TestCase):
 
 class TestCarryForwardAndBuild(unittest.TestCase):
     def test_carry_forward_empty(self):
-        out = pc.carry_forward("")
+        out = pc.carry_forward("", "s1")
         self.assertEqual(out["Current Goal"], cc.PLACEHOLDER)
         self.assertEqual(out["Next Steps"], cc.PLACEHOLDER)
 
     def test_carry_forward_preserves(self):
         prev = (
-            "# Session Checkpoint\n\n"
+            "# Session Checkpoint\n"
+            "Updated: x | Trigger: auto | Session: s1 | Project: /p\n\n"
             "## Current Goal\nbuild the thing\n\n"
             "## Current State\nhalf done\n\n"
             "## Next Steps\nfinish it\n"
         )
-        out = pc.carry_forward(prev)
+        out = pc.carry_forward(prev, "s1")
         self.assertEqual(out["Current Goal"], "build the thing")
         self.assertEqual(out["Current State"], "half done")
         self.assertEqual(out["Next Steps"], "finish it")
-
-    def test_read_remember(self):
-        with tempfile.TemporaryDirectory() as d:
-            self.assertEqual(pc.read_remember(d, 100), "(none)")
-            os.makedirs(os.path.join(d, ".remember"))
-            with open(os.path.join(d, ".remember", "remember.md"), "w") as f:
-                f.write("handoff note")
-            self.assertEqual(pc.read_remember(d, 100), "handoff note")
 
     def test_build_checkpoint_has_all_sections(self):
         md = pc.build_checkpoint(
@@ -205,11 +194,13 @@ class TestPreCompactMainE2E(unittest.TestCase):
             os.makedirs(os.path.join(d, ".agent"))
             cp = os.path.join(d, ".agent", "session-checkpoint.md")
             with open(cp, "w") as f:
-                f.write("# Session Checkpoint\n\n## Current Goal\nKEEPME\n\n"
+                f.write("# Session Checkpoint\nUpdated: x | Trigger: auto | Session: s1 | Project: /p\n\n"
+                        "## Current Goal\nKEEPME\n\n"
                         "## Current State\nx\n\n## Next Steps\ny\n")
             tpath = os.path.join(d, "t.jsonl")
             _write_jsonl(tpath, [{"message": {"role": "user", "content": "later"}}])
-            payload = json.dumps({"cwd": d, "transcript_path": tpath, "trigger": "auto"})
+            payload = json.dumps({"cwd": d, "transcript_path": tpath, "trigger": "auto",
+                                  "session_id": "s1"})
             sh = os.path.join(os.path.dirname(__file__), "..", "hooks", "precompact-checkpoint.sh")
             subprocess.run(["bash", sh], input=payload, text=True, capture_output=True)
             with open(cp) as f:

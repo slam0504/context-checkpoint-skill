@@ -1,52 +1,103 @@
 """SessionStart hook: inject the saved checkpoint (bounded). Stdlib only."""
 import json
 import os
+import re
 import sys
+from datetime import datetime, timedelta
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import checkpoint_common as cc
 
 INSTRUCTION = (
-    "Resuming from checkpoint. Reconstruct Current Goal / Current State / "
-    "Next Steps from the Git State and Recent Transcript below before continuing.\n\n"
+    "Resuming from checkpoint. First use Current Goal / Current State / "
+    "Next Steps as the handoff. If any of those sections are missing or marked "
+    "as placeholders, reconstruct them from Git State and Recent Transcript "
+    "before continuing.\n\n"
 )
-_MARKER = "\n(truncated — full checkpoint at .agent/session-checkpoint.md)"
+# The checkpoint sits under CLAUDE_PROJECT_DIR, which is not always the cwd a
+# reader would resolve a relative path against, so main() passes the full path.
+_MARKER = "\n(truncated — full checkpoint at {path})"
 
 
-def build_pointer(md):
-    ts = "unknown"
-    for line in md.splitlines():
-        if line.startswith("Updated:"):
-            ts = line[len("Updated:"):].split("|")[0].strip()
-            break
+NOTES_WARNING = (
+    "Remembered Notes is a log shared by every session started in this project "
+    "directory, so some entries may come from other sessions.\n\n"
+)
+_MESSAGE_START = re.compile(r"\n\n(?=\*\*(?:user|assistant):\*\* )")
+
+
+def format_age(age):
+    minutes = int(age.total_seconds() // 60)
+    if minutes < 60:
+        return f"{minutes} min"
+    hours = minutes // 60
+    if hours < 48:
+        return f"{hours} h"
+    return f"{hours // 24} d"
+
+
+def build_pointer(path, header, age, same_session):
+    ts = header.get("Updated", "unknown")
+    who = "this session" if same_session else "another session"
     return (
-        f"A session checkpoint exists at .agent/session-checkpoint.md "
-        f"(updated {ts}). Read it if continuing prior work."
+        f"A session checkpoint exists at {path} "
+        f"(updated {ts}, {format_age(age)} ago, written by {who}). "
+        f"Read it only if you are continuing that work."
     )
 
 
-def build_restore_payload(md, restore_max):
-    full = INSTRUCTION + md
+def _latest_messages(body, budget):
+    """Keep whole messages, newest first, within budget; flag if any were dropped."""
+    messages = _MESSAGE_START.split(body)
+    kept = []
+    used = 0
+    for msg in reversed(messages):
+        cost = len(msg) + (2 if kept else 0)
+        if used + cost > budget:
+            break
+        kept.append(msg)
+        used += cost
+    return kept[::-1], messages
+
+
+def build_restore_payload(md, restore_max, path=".agent/session-checkpoint.md"):
+    notes = cc.get_section(md, "Remembered Notes")
+    lead = INSTRUCTION + (NOTES_WARNING if notes and notes != "(none)" else "")
+    full = lead + md
     if len(full) <= restore_max:
         return full
-    header = "## Recent Transcript\n"
-    idx = md.find(header)
-    if idx == -1:
-        return cc.truncate(full, restore_max, _MARKER)
-    body_start = idx + len(header)
-    next_idx = md.find("\n## ", body_start)
-    if next_idx == -1:
-        next_idx = len(md)
-    before = md[:body_start]
-    after = md[next_idx:]
-    budget = restore_max - len(INSTRUCTION) - len(before) - len(after) - len(_MARKER)
-    if budget < 0:
-        budget = 0
-    new_rt = md[body_start:body_start + budget].rstrip() + _MARKER
-    result = INSTRUCTION + before + new_rt + after
-    # Hard backstop: non-transcript sections (git/judgment/remember) can alone
-    # exceed the cap, leaving budget at 0. Guarantee the injected payload is bounded.
-    return cc.truncate(result, restore_max, _MARKER)
+    marker = _MARKER.format(path=path)
+    preamble, sections = cc.split_checkpoint(md)
+    bodies = []
+    for name, body in sections:
+        if name == "Remembered Notes":
+            body = cc.tail(body, restore_max // 4)
+        elif name != "Recent Transcript":
+            body = cc.truncate(body, restore_max // 8)
+        bodies.append(body)
+
+    def assemble():
+        text = "\n\n".join(
+            f"## {name}\n{body}" for (name, _), body in zip(sections, bodies)
+        )
+        return lead + preamble + "\n\n" + text + marker
+
+    for i, (name, body) in enumerate(sections):
+        if name != "Recent Transcript":
+            continue
+        bodies[i] = ""
+        budget = max(0, restore_max - len(assemble()))
+        kept, messages = _latest_messages(body, budget)
+        if len(kept) == len(messages):
+            bodies[i] = "\n\n".join(kept)
+            continue
+        prefix = "(…earlier messages trimmed…)\n\n"
+        budget = max(0, budget - len(prefix))
+        kept, _ = _latest_messages(body, budget)
+        kept = kept or [cc.truncate(messages[-1], budget)]
+        bodies[i] = prefix + "\n\n".join(kept)
+    # Hard backstop: the fixed sections can alone exceed the cap.
+    return cc.truncate(assemble(), restore_max, marker)
 
 
 def emit(additional_context):
@@ -58,11 +109,26 @@ def emit(additional_context):
     }))
 
 
+def checkpoint_age(header, path):
+    try:
+        return max(timedelta(0), datetime.now() - datetime.fromisoformat(header["Updated"]))
+    except (KeyError, ValueError, TypeError):
+        pass
+    try:
+        mtime = datetime.fromtimestamp(os.path.getmtime(path))
+    except OSError:
+        return timedelta(0)
+    return max(timedelta(0), datetime.now() - mtime)
+
+
 def main():
     data = cc.read_hook_input(sys.stdin.read())
-    project_root = cc.resolve_project_root(data)
     source = data.get("source", "")
-    checkpoint_path = os.path.join(project_root, ".agent", "session-checkpoint.md")
+    root = cc.resolve_checkpoint_root(data)
+    checkpoint_path = cc.session_checkpoint_path(root, data.get("session_id"))
+    if not checkpoint_path or not os.path.exists(checkpoint_path):
+        checkpoint_path = os.path.join(root, ".agent", "session-checkpoint.md")
+    checkpoint_path = os.path.abspath(checkpoint_path)
     if not os.path.exists(checkpoint_path):
         return
     try:
@@ -70,10 +136,16 @@ def main():
             md = f.read()
     except OSError:
         return
-    if source == "startup":
-        emit(build_pointer(md))
-    elif source in ("compact", "resume", "clear"):
-        emit(build_restore_payload(md, cc.get_int("CC_RESTORE_MAXCHARS", 6000)))
+    header = cc.parse_header(md)
+    age = checkpoint_age(header, checkpoint_path)
+    session_id = data.get("session_id")
+    same_session = bool(session_id) and header.get("Session") == session_id
+    restore_max_age = timedelta(hours=cc.get_int("CC_RESTORE_MAX_AGE_HOURS", 24))
+    pointer_max_age = timedelta(hours=cc.get_int("CC_POINTER_MAX_AGE_HOURS", 168))
+    if source in ("compact", "resume", "clear") and same_session and age <= restore_max_age:
+        emit(build_restore_payload(md, cc.get_int("CC_RESTORE_MAXCHARS", 6000), checkpoint_path))
+    elif source in ("startup", "compact", "resume", "clear") and age <= pointer_max_age:
+        emit(build_pointer(checkpoint_path, header, age, same_session))
 
 
 if __name__ == "__main__":
