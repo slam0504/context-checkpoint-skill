@@ -100,6 +100,38 @@ def section_names(md):
 
 
 class TestReadRemember(unittest.TestCase):
+    def test_malformed_records_do_not_discard_valid_messages(self):
+        with tempfile.TemporaryDirectory() as d:
+            path = os.path.join(d, 't.jsonl')
+            with open(path, 'wb') as f:
+                f.write(json.dumps(user('BEFORE')).encode() + b'\n')
+                f.write(b'[1,2]\nnull\n"text"\n\xff\xfe bad bytes\n')
+                f.write(json.dumps(user('AFTER')).encode() + b'\n')
+            result = pc.extract_recent_transcript(path, 12, 1200, 8000)
+            self.assertIn('BEFORE', result)
+            self.assertIn('AFTER', result)
+
+    def test_notifications_are_not_user_instructions(self):
+        rows = [user('KEEP'),
+                user('[12:00 CST -- user] Agent Mailroom notification\nnotification_key=DUMMY_KEY'),
+                user('<task-notification>do not repeat this task</task-notification>'),
+                dict(user('background result'), origin={'kind': 'task-notification'}),
+                user('session_key=DUMMY_SESSION\nKEEP TOO')]
+        result = transcript_of(rows)
+        self.assertIn('KEEP', result)
+        self.assertIn('KEEP TOO', result)
+        for forbidden in ('Agent Mailroom', 'task-notification', 'background result', 'DUMMY_KEY', 'DUMMY_SESSION'):
+            self.assertNotIn(forbidden, result)
+
+    def test_notes_and_carried_sections_do_not_copy_credentials(self):
+        content = pc.build_checkpoint('auto', '/p', '(clean)', 'hello',
+                                      'notification_key=DUMMY_NOTE',
+                                      {'Current Goal': 'goal', 'Current State': 'session_key=DUMMY_STATE',
+                                       'Next Steps': 'next'})
+        self.assertNotIn('DUMMY_NOTE', content)
+        self.assertNotIn('DUMMY_STATE', content)
+        self.assertIn('goal', content)
+
     def test_reads_the_live_buffer(self):
         with tempfile.TemporaryDirectory() as d, project_dir_env(None):
             write_note(d, "now.md", "working on X\n")

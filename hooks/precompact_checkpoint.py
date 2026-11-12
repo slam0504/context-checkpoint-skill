@@ -82,17 +82,29 @@ def extract_recent_transcript(transcript_path, n, msg_max, total_max):
     # assistant messages are the bulk of a transcript, so consecutive ones are
     # folded into one entry instead of each taking a slot in the window.
     entries = []
+    malformed = 0
     try:
-        with open(transcript_path) as f:
-            for line in f:
-                line = line.strip()
+        with open(transcript_path, 'rb') as f:
+            for raw in f:
+                try:
+                    line = raw.decode('utf-8').strip()
+                except UnicodeDecodeError:
+                    malformed += 1
+                    continue
                 if not line:
                     continue
                 try:
                     obj = json.loads(line)
                 except ValueError:
+                    malformed += 1
+                    continue
+                if not isinstance(obj, dict):
+                    malformed += 1
                     continue
                 if obj.get("isMeta") or obj.get("isCompactSummary"):
+                    continue
+                origin = obj.get('origin')
+                if isinstance(origin, dict) and origin.get('kind') == 'task-notification':
                     continue
                 # Other line types (api-request-blob) carry a copy of a
                 # message that is already logged as type user/assistant.
@@ -106,6 +118,9 @@ def extract_recent_transcript(transcript_path, n, msg_max, total_max):
                     continue
                 content = message.get("content")
                 text = _message_text(content)
+                if 'Agent Mailroom notification' in text or '<task-notification>' in text:
+                    continue
+                text = cc.sanitize_text(text)
                 tools = _tool_names(content)
                 if text:
                     entry = f"**{role}:** {cc.truncate(_demote_headings(text), msg_max)}"
@@ -127,13 +142,15 @@ def extract_recent_transcript(transcript_path, n, msg_max, total_max):
         for kind, v in entries
     ]
     if not window:
-        return "(no recent messages)"
+        window = ['(no recent messages)']
     recent = list(window)
     while len(recent) > 1 and len("\n\n".join(recent)) > total_max:
         recent.pop(0)
     body = "\n\n".join(recent)
     if len(recent) < len(window):
         body = "(…earlier messages trimmed…)\n\n" + body
+    if malformed:
+        body = f'(skipped {malformed} malformed transcript records)\n\n' + body
     return cc.truncate(body, total_max)
 
 
@@ -185,7 +202,7 @@ def read_remember(project_root, maxchars):
             except (OSError, ValueError):
                 continue
             if text:
-                return cc.tail(_demote_headings(text), maxchars)
+                return cc.tail(_demote_headings(cc.sanitize_text(text)), maxchars)
     return "(none)"
 
 
@@ -227,7 +244,7 @@ def build_checkpoint(trigger, project_root, git_state, transcript, remember, car
     header = f"Updated: {ts} | Trigger: {trigger} | Session: {session_id} | Project: {project_root}"
     if cwd and cwd != project_root:
         header += f" | Cwd: {cwd}"
-    return f"# Session Checkpoint\n{header}\n\n{body}\n"
+    return cc.sanitize_text(f"# Session Checkpoint\n{header}\n\n{body}\n")
 
 
 def prune_session_checkpoints(root, keep_path, max_age):
@@ -270,14 +287,14 @@ def main():
     prev_md = ""
     if os.path.exists(prev_path):
         try:
-            with open(prev_path) as f:
+            with open(prev_path, encoding='utf-8') as f:
                 prev_md = f.read()
-        except OSError:
+        except (OSError, UnicodeError):
             prev_md = ""
 
     carried = carry_forward(prev_md, data.get("session_id"))
     for k in carried:
-        carried[k] = cc.truncate(carried[k], jud_max)
+        carried[k] = cc.truncate(cc.sanitize_text(carried[k]), jud_max)
 
     content = build_checkpoint(
         trigger,

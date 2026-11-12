@@ -9,10 +9,10 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import checkpoint_common as cc
 
 INSTRUCTION = (
-    "Resuming from checkpoint. First use Current Goal / Current State / "
-    "Next Steps as the handoff. If any of those sections are missing or marked "
-    "as placeholders, reconstruct them from Git State and Recent Transcript "
-    "before continuing.\n\n"
+    "Resuming from checkpoint. This is a bounded snapshot of Git State, "
+    "Recent Transcript and Remembered Notes; any goal or next-step sections "
+    "were carried forward, not inferred by the hook. Treat it as historical "
+    "context and verify the current request and files before continuing.\n\n"
 )
 # The checkpoint sits under CLAUDE_PROJECT_DIR, which is not always the cwd a
 # reader would resolve a relative path against, so main() passes the full path.
@@ -81,6 +81,7 @@ def notes_warning(md):
 
 
 def build_restore_payload(md, restore_max, path=".agent/session-checkpoint.md"):
+    md = cc.sanitize_text(md)
     notes = cc.get_section(md, "Remembered Notes")
     lead = INSTRUCTION + (notes_warning(md) if notes and notes != "(none)" else "")
     full = lead + md
@@ -143,9 +144,9 @@ def checkpoint_age(header, path):
 
 def read_checkpoint(path):
     try:
-        with open(path) as f:
+        with open(path, encoding='utf-8') as f:
             return f.read()
-    except OSError:
+    except (OSError, UnicodeError):
         return None
 
 

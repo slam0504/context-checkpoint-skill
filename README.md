@@ -4,13 +4,14 @@ Auto-save a durable, bounded **session checkpoint** right before Claude Code com
 conversation, and auto-restore it after a compaction, `/clear`, or session resume — so context
 survives compaction and you can `/clear` and keep going.
 
-It does **not** speed up Claude's built-in compaction (no hook can). What it does is make
-compaction **lossless**: your own checkpoint file is written at the compaction moment and
-re-injected into context afterwards.
+It does **not** speed up Claude's built-in compaction. It saves a bounded snapshot at
+the compaction moment and re-injects it afterwards. Messages and sections can be
+truncated or omitted; this is not a lossless record or a substitute for a verified handoff.
 
 ## How it works
 
-Two global Claude Code hooks (zero API cost, stdlib Python only):
+Two global Claude Code hooks (no API calls of their own, stdlib Python only;
+restored text contributes to subsequent model input):
 
 | Hook | Fires on | What it does |
 |------|----------|--------------|
@@ -29,7 +30,7 @@ Two global Claude Code hooks (zero API cost, stdlib Python only):
   left by a failed write, are deleted once they are older than the larger of
   `CC_RESTORE_MAX_AGE_HOURS` and `CC_POINTER_MAX_AGE_HOURS`.
 - The **full** (bounded) checkpoint is injected, with a one-line instruction to reconstruct missing
-  judgment sections, only when all three hold: the source is `compact` / `resume` / `clear`, the
+  context from current files rather than trusting historical notes, only when all three hold: the source is `compact` / `resume` / `clear`, the
   checkpoint was written by the **same session**, and it is no older than
   `CC_RESTORE_MAX_AGE_HOURS`. Otherwise, if the checkpoint is no older than
   `CC_POINTER_MAX_AGE_HOURS` (any of `startup` / `compact` / `resume` / `clear`), only a **one-line
@@ -76,6 +77,13 @@ Updated: <timestamp> | Trigger: auto|manual | Session: <session_id> | Project: <
   one line such as `[tool_use: Bash ×3, Read]` (consecutive tool-only messages merge into one entry
   and do not use up the window). Tool results, `isMeta` / `isCompactSummary` lines, line types other
   than `user` / `assistant`, and `<system-reminder>` text are skipped.
+- Mailroom and task notifications are excluded from the transcript. Lines containing
+  known mailroom credential fields (`notification_key`, `session_key`) are omitted
+  from new checkpoints and restored content, including older checkpoints. This is
+  a targeted filter, not a general secret scanner; existing files are not rewritten.
+- Malformed JSON, non-object JSON and invalid UTF-8 transcript records are skipped
+  without losing valid records before or after them. The snapshot reports the skipped
+  record count. A checkpoint file with invalid UTF-8 is not restored.
 - `## ` headings inside transcript messages and notes are demoted to `###` so they cannot be read back
   as checkpoint sections.
 - Remembered Notes come from `CLAUDE_PROJECT_DIR`, then the hook's cwd. When the directory is a
@@ -123,7 +131,7 @@ The hooks only fire inside a live Claude Code session, so confirm end-to-end man
 1. In any project with some work, run `/compact`. Check `<project>/.agent/session-checkpoint.md`
    exists with a populated `## Git State` and `## Recent Transcript`, and no `*.md.tmp` left behind.
 2. Run `/clear`. On the next turn, the injected context should begin with
-   *"Resuming from checkpoint. First use Current Goal / Current State / Next Steps as the handoff…"*
+   *"Resuming from checkpoint. This is a bounded snapshot…"*
    (a pointer line instead if the checkpoint is from another session or older than
    `CC_RESTORE_MAX_AGE_HOURS`).
 3. If anything misbehaves: re-run with `CONTEXT_CHECKPOINT_STRICT=1`, and check

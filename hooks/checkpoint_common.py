@@ -7,11 +7,26 @@ from datetime import datetime, timedelta
 PLACEHOLDER = "(reconstruct from Recent Transcript on resume)"
 
 
+def sanitize_text(text):
+    """Omit known mailroom credential lines, including in older checkpoints.
+
+    This is a targeted filter, not a general-purpose secret scanner.
+    """
+    text = re.sub(r'<task-notification>.*?</task-notification>', '', text, flags=re.S)
+    return '\n'.join(
+        '[mailroom credential omitted]' if re.search(r'\b(?:notification_key|session_key)\b', line, re.I)
+        else line
+        for line in text.split('\n')
+        if 'Agent Mailroom notification' not in line
+    )
+
+
 def read_hook_input(raw):
     if not raw or not str(raw).strip():
         return {}
     try:
-        return json.loads(raw)
+        data = json.loads(raw)
+        return data if isinstance(data, dict) else {}
     except (ValueError, TypeError):
         return {}
 

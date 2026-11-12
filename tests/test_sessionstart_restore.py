@@ -66,6 +66,19 @@ def run_hook(payload, home, project_dir, **extra_env):
 
 
 class TestWhatGetsInjected(unittest.TestCase):
+    def test_invalid_utf8_checkpoint_is_not_injected(self):
+        path = write_checkpoint(self.root, checkpoint_md())
+        with open(path, 'ab') as f:
+            f.write(b'\xff')
+        self.assertIsNone(self.run_source('compact'))
+
+    def test_old_checkpoint_credentials_are_not_restored(self):
+        write_checkpoint(self.root, checkpoint_md(notes='notification_key=DUMMY_OLD\nuseful note'))
+        ctx = self.run_source('compact')
+        self.assertIn('useful note', ctx)
+        self.assertNotIn('DUMMY_OLD', ctx)
+        self.assertNotIn('First use Current Goal', ctx)
+
     def setUp(self):
         self.root_ctx = tempfile.TemporaryDirectory()
         self.home_ctx = tempfile.TemporaryDirectory()
