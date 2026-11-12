@@ -23,6 +23,17 @@ NOTES_WARNING = (
     "Remembered Notes is a log shared by every session started in this project "
     "directory, so some entries may come from other sessions.\n\n"
 )
+# scripts/remember-branch.sh makes the remember plugin end each note heading
+# with the first 8 characters of the id of the session it summarised, for ids
+# that start with 8 lowercase hex digits; this pattern has to accept the same
+# ids. Where that script is not wired in, no heading carries a tag and the
+# sentence only says that any entry may be another session's.
+NOTES_WARNING_TAGGED = (
+    "Remembered Notes is a log shared by every session started in this project "
+    "directory. A heading ending in {tag} marks an entry from this session; "
+    "any other entry may come from another session.\n\n"
+)
+_TAGGABLE_SESSION = re.compile(r"[0-9a-f]{8}")
 _MESSAGE_START = re.compile(r"\n\n(?=\*\*(?:user|assistant):\*\* )")
 
 
@@ -60,9 +71,18 @@ def _latest_messages(body, budget):
     return kept[::-1], messages
 
 
+def notes_warning(md):
+    # main() only injects a checkpoint written by the session reading it, so
+    # the header's Session is "this session".
+    session = cc.parse_header(md).get("Session", "")
+    if _TAGGABLE_SESSION.match(session):
+        return NOTES_WARNING_TAGGED.format(tag=session[:8])
+    return NOTES_WARNING
+
+
 def build_restore_payload(md, restore_max, path=".agent/session-checkpoint.md"):
     notes = cc.get_section(md, "Remembered Notes")
-    lead = INSTRUCTION + (NOTES_WARNING if notes and notes != "(none)" else "")
+    lead = INSTRUCTION + (notes_warning(md) if notes and notes != "(none)" else "")
     full = lead + md
     if len(full) <= restore_max:
         return full

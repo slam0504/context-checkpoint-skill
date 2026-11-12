@@ -17,6 +17,12 @@ NOTE_SENTENCE = (
     "Remembered Notes is a log shared by every session started in this project "
     "directory, so some entries may come from other sessions."
 )
+TAGGABLE_SESSION = "394e2224-8316-46e4-abd0-ba88f10a481d"
+TAGGED_NOTE_SENTENCE = (
+    "Remembered Notes is a log shared by every session started in this project "
+    "directory. A heading ending in 394e2224 marks an entry from this session; "
+    "any other entry may come from another session."
+)
 
 
 def checkpoint_md(session="sess-1", age=timedelta(minutes=1), notes="NOTE-X",
@@ -80,6 +86,12 @@ class TestWhatGetsInjected(unittest.TestCase):
         self.assertIn("NOTE-X", ctx)
         self.assertIn("hello there", ctx)
         self.assertTrue(ctx.startswith(sd.INSTRUCTION))
+
+    def test_restored_notes_name_the_heading_tag_of_the_restoring_session(self):
+        write_checkpoint(self.root, checkpoint_md(session=TAGGABLE_SESSION))
+        ctx = self.run_source("compact", session_id=TAGGABLE_SESSION)
+        self.assertTrue(ctx.startswith(
+            sd.INSTRUCTION + TAGGED_NOTE_SENTENCE + "\n\n# Session Checkpoint"))
 
     def test_resume_and_clear_from_another_session_only_get_a_pointer(self):
         path = write_checkpoint(self.root, checkpoint_md(session="someone-else"))
@@ -349,6 +361,31 @@ class TestSharedNotesWarning(unittest.TestCase):
         self.assertLessEqual(len(sd.build_restore_payload(md, exact - 1)), exact - 1)
         self.assertNotEqual(sd.build_restore_payload(md, exact - 1),
                             sd.INSTRUCTION + NOTE_SENTENCE + "\n\n" + md)
+
+    def test_warning_names_the_heading_tag_of_this_sessions_entries(self):
+        md = checkpoint_md(session=TAGGABLE_SESSION, notes="something")
+        self.assertTrue(sd.build_restore_payload(md, 6000).startswith(
+            sd.INSTRUCTION + TAGGED_NOTE_SENTENCE + "\n\n# Session Checkpoint"))
+
+    def test_session_ids_that_get_no_heading_tag_keep_the_plain_warning(self):
+        for session in ("394e222", "394e222g-8316", "ABCDEF12-8316", "-394e2224", "unknown", None):
+            with self.subTest(session=session):
+                md = checkpoint_md(session=session, notes="something")
+                self.assertTrue(sd.build_restore_payload(md, 6000).startswith(
+                    sd.INSTRUCTION + NOTE_SENTENCE + "\n\n# Session Checkpoint"))
+
+    def test_taggable_session_without_notes_has_no_warning(self):
+        md = checkpoint_md(session=TAGGABLE_SESSION, notes="(none)")
+        self.assertTrue(sd.build_restore_payload(md, 6000).startswith(
+            sd.INSTRUCTION + "# Session Checkpoint"))
+
+    def test_tagged_warning_is_counted_against_the_cap(self):
+        md = checkpoint_md(session=TAGGABLE_SESSION, notes="something")
+        whole = sd.INSTRUCTION + TAGGED_NOTE_SENTENCE + "\n\n" + md
+        self.assertEqual(sd.build_restore_payload(md, len(whole)), whole)
+        capped = sd.build_restore_payload(md, len(whole) - 1)
+        self.assertLessEqual(len(capped), len(whole) - 1)
+        self.assertTrue(capped.startswith(sd.INSTRUCTION + TAGGED_NOTE_SENTENCE))
 
 
 class TestParseHeader(unittest.TestCase):

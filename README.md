@@ -40,6 +40,11 @@ Two global Claude Code hooks (zero API cost, stdlib Python only):
   sections are capped.
 - If the checkpoint has Remembered Notes, a sentence warning that the notes are shared by every
   session in the project directory is injected ahead of it.
+  When the header's `Session` id starts with 8 lowercase hex characters, the sentence also says that
+  headings ending in those 8 characters are this session's entries. That only means something with the
+  `remember` plugin's optional `REMEMBER_BRANCH_CMD` setting, which tags note headings; this repo does
+  not include a matching script (it is `claude/scripts/remember-branch.sh` in ai-agent-config). Without
+  it, headings carry no tag, that part of the sentence simply does not apply, and nothing else changes.
 - Writes are **atomic** (`.tmp` + `os.replace`), so a restore never reads a partial file.
 - Hooks are **non-blocking by default**: any error is logged and the hook still exits 0, so the
   checkpoint system can never trap you during compaction. Set `CONTEXT_CHECKPOINT_STRICT=1` to make
