@@ -141,27 +141,38 @@ def checkpoint_age(header, path):
     return max(timedelta(0), datetime.now() - mtime)
 
 
+def read_checkpoint(path):
+    try:
+        with open(path) as f:
+            return f.read()
+    except OSError:
+        return None
+
+
 def main():
     data = cc.read_hook_input(sys.stdin.read())
     source = data.get("source", "")
     root = cc.resolve_checkpoint_root(data)
-    checkpoint_path = cc.session_checkpoint_path(root, data.get("session_id"))
-    if not checkpoint_path or not os.path.exists(checkpoint_path):
-        checkpoint_path = os.path.join(root, ".agent", "session-checkpoint.md")
-    checkpoint_path = os.path.abspath(checkpoint_path)
-    if not os.path.exists(checkpoint_path):
-        return
-    try:
-        with open(checkpoint_path) as f:
-            md = f.read()
-    except OSError:
+    session_id = data.get("session_id")
+    checkpoint_path = os.path.abspath(os.path.join(root, ".agent", "session-checkpoint.md"))
+    md = read_checkpoint(checkpoint_path)
+    own_path = cc.session_checkpoint_path(root, session_id)
+    own_md = read_checkpoint(own_path) if own_path else None
+    if own_md is not None:
+        # precompact writes the shared file even when the copy cannot be
+        # written, which leaves an earlier copy beside a newer checkpoint of
+        # this same session. Only then is the shared file the one to read.
+        shared = cc.parse_header(md)
+        if not (shared.get("Session") == session_id
+                and shared.get("Updated", "") > cc.parse_header(own_md).get("Updated", "")):
+            checkpoint_path, md = os.path.abspath(own_path), own_md
+    if md is None:
         return
     header = cc.parse_header(md)
     age = checkpoint_age(header, checkpoint_path)
-    session_id = data.get("session_id")
     same_session = bool(session_id) and header.get("Session") == session_id
-    restore_max_age = timedelta(hours=cc.get_int("CC_RESTORE_MAX_AGE_HOURS", 24))
-    pointer_max_age = timedelta(hours=cc.get_int("CC_POINTER_MAX_AGE_HOURS", 168))
+    restore_max_age = cc.max_age("CC_RESTORE_MAX_AGE_HOURS", 24)
+    pointer_max_age = cc.max_age("CC_POINTER_MAX_AGE_HOURS", 168)
     if source in ("compact", "resume", "clear") and same_session and age <= restore_max_age:
         emit(build_restore_payload(md, cc.get_int("CC_RESTORE_MAXCHARS", 6000), checkpoint_path))
     elif source in ("startup", "compact", "resume", "clear") and age <= pointer_max_age:

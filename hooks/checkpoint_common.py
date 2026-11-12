@@ -2,7 +2,7 @@
 import json
 import os
 import re
-from datetime import datetime
+from datetime import datetime, timedelta
 
 PLACEHOLDER = "(reconstruct from Recent Transcript on resume)"
 
@@ -21,6 +21,13 @@ def get_int(name, default):
         return int(os.environ.get(name, default))
     except (ValueError, TypeError):
         return default
+
+
+def max_age(name, default_hours):
+    # A timedelta holds at most 999999999 days. A longer setting means "never
+    # expires"; it must not crash the hook.
+    limit = timedelta.max.days * 24
+    return timedelta(hours=max(-limit, min(limit, get_int(name, default_hours))))
 
 
 def resolve_project_root(data):

@@ -251,6 +251,48 @@ class TestPerSessionCopy(unittest.TestCase):
         self.assertIn(path, ctx)
         self.assertIn("another session", ctx)
 
+    def test_newer_shared_file_from_this_session_wins_over_an_older_own_copy(self):
+        # precompact still writes the shared file when the copy cannot be
+        # written, so an earlier copy can sit next to the newer checkpoint.
+        write_checkpoint(self.root, checkpoint_md(transcript="**user:** NEW-TEXT"))
+        write_session_copy(self.root, "sess-1", checkpoint_md(
+            age=timedelta(hours=1), transcript="**user:** OLD-TEXT"))
+        ctx = self.run_source("compact")
+        self.assertTrue(ctx.startswith(sd.INSTRUCTION))
+        self.assertIn("NEW-TEXT", ctx)
+        self.assertNotIn("OLD-TEXT", ctx)
+
+    def test_own_copy_is_kept_when_the_shared_file_from_this_session_is_older(self):
+        write_checkpoint(self.root, checkpoint_md(
+            age=timedelta(hours=1), transcript="**user:** OLD-TEXT"))
+        write_session_copy(self.root, "sess-1", checkpoint_md(transcript="**user:** NEW-TEXT"))
+        ctx = self.run_source("compact")
+        self.assertIn("NEW-TEXT", ctx)
+        self.assertNotIn("OLD-TEXT", ctx)
+
+    def test_newer_shared_file_from_another_session_does_not_replace_the_own_copy(self):
+        write_checkpoint(self.root, checkpoint_md(session="other", transcript="**user:** OTHER-TEXT"))
+        write_session_copy(self.root, "sess-1", checkpoint_md(
+            age=timedelta(hours=1), transcript="**user:** MY-TEXT"))
+        ctx = self.run_source("compact")
+        self.assertIn("MY-TEXT", ctx)
+        self.assertNotIn("OTHER-TEXT", ctx)
+
+    def test_unreadable_own_copy_falls_back_to_the_shared_file(self):
+        os.makedirs(os.path.join(self.root, ".agent", "session-checkpoints", "sess-1.md"))
+        write_checkpoint(self.root, checkpoint_md(transcript="**user:** SHARED-TEXT"))
+        ctx = self.run_source("compact")
+        self.assertTrue(ctx.startswith(sd.INSTRUCTION))
+        self.assertIn("SHARED-TEXT", ctx)
+
+    def test_age_setting_too_large_for_a_timedelta_still_restores(self):
+        write_checkpoint(self.root, checkpoint_md(transcript="**user:** MY-TEXT"))
+        for name in ("CC_RESTORE_MAX_AGE_HOURS", "CC_POINTER_MAX_AGE_HOURS"):
+            with self.subTest(setting=name):
+                ctx = run_hook({"cwd": self.root, "source": "compact", "session_id": "sess-1"},
+                               self.home, self.root, **{name: "99999999999999"})
+                self.assertIn("MY-TEXT", ctx)
+
     def test_unusable_session_id_never_looks_for_a_copy(self):
         path = write_checkpoint(self.root, checkpoint_md(session="other"))
         ctx = self.run_source("compact", session_id="../x")

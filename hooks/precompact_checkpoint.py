@@ -4,7 +4,6 @@ import re
 import subprocess
 import sys
 import time
-from datetime import timedelta
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import checkpoint_common as cc
@@ -237,7 +236,8 @@ def prune_session_checkpoints(root, keep_path, max_age):
     try:
         for name in os.listdir(d):
             path = os.path.join(d, name)
-            if (path == keep_path or not re.fullmatch(r"[A-Za-z0-9_-]+\.md", name)
+            # ".tmp" is what atomic_write leaves behind when a write fails.
+            if (path == keep_path or not re.fullmatch(r"[A-Za-z0-9_-]+\.md(\.tmp)?", name)
                     or not os.path.isfile(path)):
                 continue
             try:
@@ -297,9 +297,9 @@ def main():
             cc.log(root, f"per-session checkpoint not written: {e}")
     cc.atomic_write(checkpoint_path, content)
     # A copy can be read back for as long as either window allows.
-    keep_hours = max(cc.get_int("CC_RESTORE_MAX_AGE_HOURS", 24),
-                     cc.get_int("CC_POINTER_MAX_AGE_HOURS", 168))
-    prune_session_checkpoints(root, session_path, timedelta(hours=keep_hours))
+    keep = max(cc.max_age("CC_RESTORE_MAX_AGE_HOURS", 24),
+               cc.max_age("CC_POINTER_MAX_AGE_HOURS", 168))
+    prune_session_checkpoints(root, session_path, keep)
     cc.log(root, f"PreCompact checkpoint written (trigger={trigger}, session={session_id})")
 
 

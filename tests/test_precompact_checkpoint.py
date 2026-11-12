@@ -709,6 +709,23 @@ class TestHooksEndToEnd(unittest.TestCase):
         left = self.copies_left_after_compacting(CC_POINTER_MAX_AGE_HOURS="1")
         self.assertEqual(left, ["fresh.md", "now.md", "two-hours.md"])
 
+    def test_age_setting_too_large_for_a_timedelta_keeps_every_copy(self):
+        left = self.copies_left_after_compacting(CC_POINTER_MAX_AGE_HOURS="99999999999999")
+        self.assertEqual(left, ["fresh.md", "now.md", "two-hours.md"])
+
+    def test_temp_files_left_by_a_failed_write_are_pruned_like_the_copies(self):
+        with tempfile.TemporaryDirectory() as root, tempfile.TemporaryDirectory() as home:
+            d = os.path.join(root, ".agent", "session-checkpoints")
+            os.makedirs(d)
+            for name, days in (("stale.md.tmp", 8), ("recent.md.tmp", 6), ("stale.md.bak", 8)):
+                with open(os.path.join(d, name), "w") as f:
+                    f.write("x")
+                self.age_file(os.path.join(d, name), days * 24)
+            self.run_precompact({"cwd": root, "trigger": "auto", "session_id": "now"},
+                                home, root, [user("hi")])
+            left = sorted(os.listdir(d))
+        self.assertEqual(left, ["now.md", "recent.md.tmp", "stale.md.bak"])
+
     def test_shared_checkpoint_is_still_written_when_the_session_copy_cannot_be(self):
         with tempfile.TemporaryDirectory() as root, tempfile.TemporaryDirectory() as home:
             os.makedirs(os.path.join(root, ".agent"))

@@ -23,8 +23,10 @@ Two global Claude Code hooks (zero API cost, stdlib Python only):
 - Besides the shared `session-checkpoint.md`, each checkpoint is also written to
   `<project>/.agent/session-checkpoints/<session_id>.md`, because sessions started in the same
   directory share the one file and another session can overwrite it while this one is compacting.
-  `SessionStart` reads the session's own copy when it exists, otherwise the shared file. Copies other
-  than the current one are deleted once they are older than the larger of
+  `SessionStart` reads the session's own copy when it can be read, otherwise the shared file. The
+  shared file also wins when it was written by the same session more recently than the copy, which
+  happens when the copy could not be written. Copies other than the current one, and `.md.tmp` files
+  left by a failed write, are deleted once they are older than the larger of
   `CC_RESTORE_MAX_AGE_HOURS` and `CC_POINTER_MAX_AGE_HOURS`.
 - The **full** (bounded) checkpoint is injected, with a one-line instruction to reconstruct missing
   judgment sections, only when all three hold: the source is `compact` / `resume` / `clear`, the
